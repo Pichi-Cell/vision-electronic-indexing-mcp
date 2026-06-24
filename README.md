@@ -80,15 +80,47 @@ Override it with:
 export WORKERS_AI_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
 ```
 
-## Pi extension setup
+## Pi package / extension setup
 
-This repo includes a project-local Pi extension:
+This repo is also a Pi package. Recommended install:
+
+```bash
+pi install git:github.com/<you>/<this-repo>
+```
+
+For local development, open this repo in Pi and trust the project. Pi should auto-discover:
 
 ```text
 .pi/extensions/vision-inventory-mcp/index.ts
+.pi/skills/vision-inventory-workflow/SKILL.md
+.pi/prompts/vision-inventory-agent-bom.md
 ```
 
-After opening this repo in Pi and trusting the project, Pi should auto-discover the extension. If Pi is already running, use `/reload` or restart Pi.
+If Pi is already running, use `/reload` or restart Pi.
+
+The package intentionally does **not** bundle these external dependencies:
+
+- Python dependencies from `requirements.txt` (`mcp`, `requests`, `pillow`, `python-dotenv`; optional `pillow-heif`).
+- A Pi web-search/browser tool or skill for datasheet enrichment.
+- Cloudflare Workers AI credentials.
+
+Run setup once:
+
+```text
+/vision-inventory-setup
+```
+
+The setup command prompts for Cloudflare credentials the first time and stores them at:
+
+```text
+~/.pi/agent/vision-inventory/credentials.json
+```
+
+The file is written with `chmod 600` when supported. To change credentials later:
+
+```text
+/vision-inventory-credentials
+```
 
 The extension exposes these tools:
 
@@ -101,13 +133,16 @@ The extension exposes these tools:
 It also adds these commands:
 
 ```text
+/vision-inventory-setup
+/vision-inventory-credentials
 /vision-inventory-restart
 /vision-inventory-bom <image_folder> <output_dir> [options]
+/vision-inventory-agent-bom <image_folder> <output_dir> [options]
 ```
 
-Use `/vision-inventory-restart` if the MCP bridge needs to be restarted after changing `.env` or Python code.
+Use `/vision-inventory-restart` if the MCP bridge needs to be restarted after changing credentials or Python code.
 
-Use `/vision-inventory-bom` to run the full folder-to-CSV workflow from Pi. Examples:
+Use `/vision-inventory-bom` to run only the deterministic folder-to-CSV workflow from Pi. Examples:
 
 ```text
 /vision-inventory-bom ./photos ./output
@@ -116,6 +151,15 @@ Use `/vision-inventory-bom` to run the full folder-to-CSV workflow from Pi. Exam
 ```
 
 Options are forwarded to `scripts/inventory_folder_to_csv.py`.
+
+Use `/vision-inventory-agent-bom` for the full agent-operated procedure: vision processing, reading `parts_to_lookup.json`, web/datasheet enrichment, writing `datasheet_cache.json`, rerunning with `--skip-vision`, and summarizing uncertain rows:
+
+```text
+/vision-inventory-agent-bom ./photos ./output
+/vision-inventory-agent-bom ./photos ./output --recursive
+```
+
+Datasheet enrichment requires an installed/enabled web-search or browser tool/skill. This package explicitly does not bundle one.
 
 The extension launches:
 
@@ -423,10 +467,15 @@ Handled cases include:
 
 ## Recommended operating procedure
 
-1. Take a clear photo of each IC group.
-2. Save photos into a dated folder.
-3. Run `scripts/inventory_folder_to_csv.py`.
-4. Inspect raw JSON and `parts_to_lookup.json`.
-5. Use Pi/web search to fill `datasheet_cache.json`.
-6. Rerun with `--skip-vision`.
-7. Review `inventory.csv`, especially rows with `needs_review=true`.
+1. Install the Pi package/extension and run `/vision-inventory-setup` once.
+2. Take a clear photo of each IC group.
+3. Save photos into a dated folder.
+4. Run the full agent workflow:
+
+   ```text
+   /vision-inventory-agent-bom ./photos ./output
+   ```
+
+5. Review `inventory.csv`, especially rows with `needs_review=true` or `verified=false`.
+
+Manual fallback remains available with `scripts/inventory_folder_to_csv.py` and `/vision-inventory-bom`.
