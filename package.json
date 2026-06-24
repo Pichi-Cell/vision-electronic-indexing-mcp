@@ -1,5 +1,5 @@
 {
-  "name": "vision-electronic-indexing-mcp-pi",
+  "name": "vision-electronic-indexing-pi",
   "version": "0.1.0",
   "description": "Pi package for agent-assisted electronics/PCB image inventory with Cloudflare Workers AI vision and datasheet enrichment.",
   "license": "MIT",
@@ -18,7 +18,6 @@
     "pcb",
     "inventory",
     "bom",
-    "mcp",
     "vision",
     "cloudflare-workers-ai"
   ],
