@@ -1,0 +1,6 @@
+mcp
+requests
+pillow
+python-dotenv
+# Optional: install for iPhone HEIC/HEIF image support
+# pillow-heif

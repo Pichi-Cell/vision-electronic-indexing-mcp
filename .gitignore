@@ -1,1 +1,26 @@
+# Secrets
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Batch workflow outputs
+output/
+output_*/
+raw/
+parts_to_lookup.json
+datasheet_cache.json
+datasheet_cache.template.json
+inventory.csv
+inventory_evidence.csv
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
