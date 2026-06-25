@@ -196,7 +196,7 @@ def result_error_summary(results: List[Dict[str, Any]]) -> Counter[str]:
     summary: Counter[str] = Counter()
     for entry in results:
         result = entry.get("result", {})
-        if isinstance(result, dict) and result.get("error"):
+        if isinstance(result, dict) and (result.get("error") or result.get("parse_error")):
             summary[classify_error(result)] += 1
     return summary
 
