@@ -105,6 +105,7 @@ Return only valid JSON using this schema:
     {{
       "item_type": "IC | connector | passive | module | switch | sensor | display | mechanical | unknown",
       "count_index": 1,
+      "visible_quantity": 1,
       "package_marking": "exact visible marking, unclear, unreadable, or [?]-marked partial text",
       "marking_confidence": "high | medium | low | unreadable",
       "likely_part": "visible part marking only, or unknown",
@@ -123,6 +124,7 @@ Rules:
 - Do not use web lookup.
 - If a marking is not readable, write "unreadable".
 - If a component is visible but not identifiable, item_type should be "unknown".
+- count_index is an ordinal item number; visible_quantity is the estimated number of matching visible physical components.
 - needs_review must be true when marking_confidence is "low" or "unreadable".
 """.strip()
 
@@ -362,6 +364,7 @@ def normalize_item(item: Any, fallback_index: int) -> Dict[str, Any]:
     default_item: Dict[str, Any] = {
         "item_type": "unknown",
         "count_index": fallback_index,
+        "visible_quantity": 1,
         "package_marking": "unknown",
         "marking_confidence": "unreadable",
         "likely_part": "unknown",
@@ -380,6 +383,11 @@ def normalize_item(item: Any, fallback_index: int) -> Dict[str, Any]:
         normalized["count_index"] = int(normalized.get("count_index", fallback_index))
     except Exception:
         normalized["count_index"] = fallback_index
+
+    try:
+        normalized["visible_quantity"] = max(1, int(normalized.get("visible_quantity", 1)))
+    except Exception:
+        normalized["visible_quantity"] = 1
 
     confidence = str(normalized.get("marking_confidence", "unreadable")).strip().lower()
     if confidence not in {"high", "medium", "low", "unreadable"}:
@@ -459,17 +467,6 @@ def normalize_inventory_result(result: Dict[str, Any], image_name: str) -> Dict[
     return normalized
 
 
-def visible_ic_items(result: Dict[str, Any]) -> List[Dict[str, Any]]:
-    items = result.get("items", [])
-    if not isinstance(items, list):
-        return []
-    return [
-        item for item in items
-        if isinstance(item, dict) and str(item.get("item_type", "")).strip().lower() == "ic"
-    ]
-
-
-
 def process_image_impl(
     image_path: str,
     max_side: int = DEFAULT_MAX_SIDE,
@@ -512,10 +509,15 @@ def process_image_impl(
 
     parsed, parse_error = extract_json_object(response_text)
     if parse_error or parsed is None:
+        message = parse_error or "Model returned invalid JSON."
         return {
             "image": image_name,
             "items": [],
-            "warnings": [parse_error or "Model returned invalid JSON."],
+            "warnings": [message],
+            "parse_error": True,
+            "parse_error_message": message,
+            "raw_response_preview": response_text[:2000],
+            "raw_response_length": len(response_text),
             "raw_response": response_text,
         }
 
@@ -699,7 +701,10 @@ def flatten_inventory_for_csv(inventory: Dict[str, Any], enrichment_cache: Optio
             # Keep the main part number as the observation, not the full package/date/lot marking.
             row["observed_markings"].add(normalized)
             try:
-                row["amount"] = max(int(row["amount"]), int(item.get("count_index", 1)))
+                if "visible_quantity" in item:
+                    row["amount"] = int(row["amount"]) + max(1, int(item.get("visible_quantity", 1)))
+                else:
+                    row["amount"] = max(int(row["amount"]), int(item.get("count_index", 1)))
             except Exception:
                 row["amount"] = max(int(row["amount"]), 1)
 
@@ -736,9 +741,12 @@ def save_inventory(
     format: str = "json",
 ) -> Dict[str, Any]:
     """
-    Save inventory results to disk as JSON or CSV.
+    Save inventory results to disk as JSON or quick CSV export.
 
     The input inventory can be the result of process_image or process_image_folder.
+    CSV output from this tool is a quick export; use scripts/inventory_folder_to_csv.py
+    or /vision-inventory-bom for the full BOM workflow with raw evidence files,
+    parts_to_lookup.json, datasheet_cache.json, and inventory_evidence.csv.
     """
     if not isinstance(inventory, dict):
         return error_response("inventory must be an object/dict.")
@@ -795,12 +803,19 @@ def save_inventory(
 
             row_count = len(rows)
 
-        return {
+        response = {
             "saved": True,
             "output_path": str(output),
             "format": fmt,
             "row_count": row_count,
         }
+        if fmt == "csv":
+            response["note"] = (
+                "This is a quick CSV export. Use scripts/inventory_folder_to_csv.py "
+                "or /vision-inventory-bom for the full BOM workflow with raw evidence, "
+                "parts_to_lookup.json, datasheet_cache.json, and inventory_evidence.csv."
+            )
+        return response
 
     except Exception as exc:
         return error_response(f"Failed to save inventory: {exc}", output_path=str(output), format=fmt)
