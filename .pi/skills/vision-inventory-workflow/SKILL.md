@@ -23,7 +23,7 @@ Use `/vision-inventory-setup` to configure credentials, check/install Python dep
 /vision-inventory-agent-bom <image_folder> <output_dir> [options]
 ```
 
-Options are forwarded to `scripts/inventory_folder_to_csv.py`, for example `--recursive`, `--limit 3`, `--segment-ics`, `--max-side 0`, and `--jpeg-quality 96`. `--max-side 0` means full resolution for full images and is the default. Use `--segment-ics` when ICs in one image have mixed orientations or upside-down markings; segmented crop submissions are resized to `max_side=250`.
+Options are forwarded to `scripts/inventory_folder_to_csv.py`, for example `--recursive`, `--limit 3`, `--segment-ics`, `--max-side 0`, and `--jpeg-quality 85`. `--max-side 0` means full resolution for full images and is the default. Use `--segment-ics` when ICs in one image have mixed orientations or upside-down markings; segmented crop submissions are resized to `max_side=250`.
 
 ## Agent Rules
 

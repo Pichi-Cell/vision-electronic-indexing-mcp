@@ -217,7 +217,7 @@ Useful options:
 /vision-inventory-agent-bom ./photos ./output --recursive
 /vision-inventory-agent-bom ./photos ./output --limit 3
 /vision-inventory-agent-bom ./photos ./output --segment-ics
-/vision-inventory-agent-bom ./photos ./output --max-side 0 --jpeg-quality 96
+/vision-inventory-agent-bom ./photos ./output --max-side 0 --jpeg-quality 85
 ```
 
 The agent workflow will:
@@ -400,7 +400,7 @@ Defaults:
 
 ```text
 max_side: 0 (full resolution)
-jpeg_quality: 96
+jpeg_quality: 85
 model: @cf/meta/llama-4-scout-17b-16e-instruct
 ```
 

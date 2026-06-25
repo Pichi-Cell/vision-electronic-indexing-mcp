@@ -57,7 +57,7 @@ except ImportError:  # pragma: no cover - compatibility fallback
 
 DEFAULT_MODEL = os.getenv("WORKERS_AI_MODEL", "@cf/meta/llama-4-scout-17b-16e-instruct")
 DEFAULT_MAX_SIDE = 0
-DEFAULT_JPEG_QUALITY = 96
+DEFAULT_JPEG_QUALITY = 85
 DEFAULT_MAX_TOKENS = 1600
 DEFAULT_TEMPERATURE = 0.05
 DEFAULT_TOP_P = 0.8
