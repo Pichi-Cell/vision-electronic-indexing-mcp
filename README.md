@@ -1,6 +1,6 @@
 # Vision Electronic Indexing for Pi
 
-Agent-assisted electronics/PCB photo indexing for Pi. The package processes images with Cloudflare Workers AI, extracts visible IC/package markings, prepares parts for datasheet lookup, and produces an enriched inventory CSV.
+Agent-assisted electronics parts/PCB photo indexing for Pi. The package processes images with Cloudflare Workers AI, extracts visible IC/package markings, prepares parts for datasheet lookup, and produces an enriched inventory CSV.
 
 Typical flow:
 
@@ -194,6 +194,13 @@ In Pi:
 ```text
 /vision-inventory-agent-bom ./photos ./output
 ```
+
+In other harnesses:
+
+```text
+/vision-inventory-workflow ./photos ./output
+```
+
 
 Useful options:
 
