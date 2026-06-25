@@ -1,13 +1,17 @@
 {
+  "output_dir": "/home/johndoe/Desktop/coding/UTN-LAB/vision-electronic-indexing-mcp/examples/no-cloudflare-demo/output",
+  "datasheet_cache_path": "/home/johndoe/Desktop/coding/UTN-LAB/vision-electronic-indexing-mcp/examples/no-cloudflare-demo/output/datasheet_cache.json",
+  "datasheet_cache_template_path": "/home/johndoe/Desktop/coding/UTN-LAB/vision-electronic-indexing-mcp/examples/no-cloudflare-demo/output/datasheet_cache.template.json",
   "instructions": [
     "Use web search to find each part datasheet, preferably from the manufacturer.",
-    "Fill output/datasheet_cache.json using the template shape shown in datasheet_cache.template.json.",
+    "Fill datasheet_cache.json in this same output directory, using datasheet_cache.template.json as the shape.",
     "Keep descriptions short, e.g. '74ls (4 bit) adder low power schottky ttl 5v DIP'.",
     "If exact candidate search fails but official results strongly indicate a likely OCR correction, keep the original candidate as this cache key and set normalized_part to the official datasheet part number.",
     "Example: if SN74AS283N appears to be an OCR error for official SN74LS283N, use key SN74AS283N with normalized_part SN74LS283N and explain the correction in notes.",
     "Only mark verified=true for a correction when the official datasheet and visual/package context make the correction highly likely; otherwise set verified=false and explain in notes.",
     "If the visual marking is uncertain, set verified=false and explain in notes."
   ],
+  "warnings": [],
   "parts": [
     {
       "part": "LM358N",

@@ -18,9 +18,9 @@ import csv
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -133,13 +133,30 @@ def extract_part_evidence(image_name: str, result: Dict[str, Any]) -> List[Dict[
     return evidence
 
 
+def preflight_credentials() -> None:
+    _account_id, _api_token, credential_error = vision.get_cloudflare_credentials()
+    if credential_error:
+        raise SystemExit(
+            f"{credential_error.get('message', 'Missing Cloudflare credentials.')} "
+            "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AUTH_TOKEN/CLOUDFLARE_API_TOKEN, "
+            "or run /vision-inventory-setup in Pi."
+        )
+
+
 def process_images(args: argparse.Namespace, raw_dir: Path) -> List[Dict[str, Any]]:
     image_folder = Path(args.image_folder).expanduser().resolve()
     if not image_folder.is_dir():
         raise SystemExit(f"Image folder does not exist or is not a directory: {image_folder}")
 
+    images = iter_images(image_folder, args.recursive, args.limit)
+    if not images:
+        print(f"No supported image files found in {image_folder}.")
+        return []
+
+    preflight_credentials()
+
     results: List[Dict[str, Any]] = []
-    for image_path in iter_images(image_folder, args.recursive, args.limit):
+    for image_path in images:
         print(f"Processing {image_path}")
         result = vision.process_image_impl(
             image_path=str(image_path),
@@ -161,7 +178,30 @@ def load_raw_results(raw_dir: Path) -> List[Dict[str, Any]]:
     return results
 
 
-def build_parts_to_lookup(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def classify_error(result: Dict[str, Any]) -> str:
+    message = str(result.get("message") or result.get("error") or "Unknown error")
+    lowered = message.lower()
+    if "credential" in lowered or "cloudflare_account_id" in lowered or "api token" in lowered:
+        return "credential errors"
+    if "cloudflare" in lowered or "workers ai" in lowered:
+        return "cloudflare api errors"
+    if "prepare image" in lowered or "unsupported image" in lowered or "image file" in lowered:
+        return "image preprocessing/input errors"
+    if result.get("parse_error"):
+        return "model json parse errors"
+    return "other errors"
+
+
+def result_error_summary(results: List[Dict[str, Any]]) -> Counter[str]:
+    summary: Counter[str] = Counter()
+    for entry in results:
+        result = entry.get("result", {})
+        if isinstance(result, dict) and result.get("error"):
+            summary[classify_error(result)] += 1
+    return summary
+
+
+def build_parts_to_lookup(results: List[Dict[str, Any]], output_dir: Path) -> Dict[str, Any]:
     grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     all_evidence: List[Dict[str, Any]] = []
 
@@ -196,16 +236,27 @@ def build_parts_to_lookup(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             }
         })
 
+    warnings: List[str] = []
+    if not parts:
+        warnings.append(
+            "No candidate IC parts were extracted. Inspect raw JSON files for unreadable markings, "
+            "image quality issues, or model/API errors."
+        )
+
     return {
+        "output_dir": str(output_dir),
+        "datasheet_cache_path": str(output_dir / "datasheet_cache.json"),
+        "datasheet_cache_template_path": str(output_dir / "datasheet_cache.template.json"),
         "instructions": [
             "Use web search to find each part datasheet, preferably from the manufacturer.",
-            "Fill output/datasheet_cache.json using the template shape shown in datasheet_cache.template.json.",
+            "Fill datasheet_cache.json in this same output directory, using datasheet_cache.template.json as the shape.",
             "Keep descriptions short, e.g. '74ls (4 bit) adder low power schottky ttl 5v DIP'.",
             "If exact candidate search fails but official results strongly indicate a likely OCR correction, keep the original candidate as this cache key and set normalized_part to the official datasheet part number.",
             "Example: if SN74AS283N appears to be an OCR error for official SN74LS283N, use key SN74AS283N with normalized_part SN74LS283N and explain the correction in notes.",
             "Only mark verified=true for a correction when the official datasheet and visual/package context make the correction highly likely; otherwise set verified=false and explain in notes.",
             "If the visual marking is uncertain, set verified=false and explain in notes."
         ],
+        "warnings": warnings,
         "parts": parts,
         "all_evidence": all_evidence,
     }
@@ -228,13 +279,20 @@ def lookup_enrichment(part: str, cache: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def estimate_amount_for_candidate(result: Dict[str, Any], candidate: str, evidence_count: int = 1) -> int:
     """Estimate physical IC quantity for one candidate in one image.
 
-    Some vision results use count_index as a grouped visible count, while others
-    use it as an ordinal. Use the maximum of matching item count, evidence count,
-    and any numeric count_index values so grouped detections like count_index=4
-    produce amount=4 without double-counting duplicate observations.
+    Prefer explicit visible_quantity when the model provides it. Older results only
+    have count_index, which may be either an ordinal index or a grouped count, so
+    the fallback remains heuristic and should be reviewed for important BOMs.
     """
     items = result.get("items", [])
     if not isinstance(items, list):
@@ -242,6 +300,7 @@ def estimate_amount_for_candidate(result: Dict[str, Any], candidate: str, eviden
 
     matched = 0
     count_values: List[int] = []
+    visible_quantities: List[int] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -250,10 +309,15 @@ def estimate_amount_for_candidate(result: Dict[str, Any], candidate: str, eviden
         if candidate_from_item(item).upper() != candidate.upper():
             continue
         matched += 1
-        try:
-            count_values.append(max(1, int(item.get("count_index", 1))))
-        except Exception:
-            pass
+        visible_quantity = positive_int(item.get("visible_quantity"))
+        if visible_quantity is not None:
+            visible_quantities.append(visible_quantity)
+        count_index = positive_int(item.get("count_index"))
+        if count_index is not None:
+            count_values.append(count_index)
+
+    if visible_quantities:
+        return max(1, sum(visible_quantities))
 
     return max([1, evidence_count, matched, *count_values])
 
@@ -265,6 +329,11 @@ def image_part_rows(results: List[Dict[str, Any]], cache: Dict[str, Any]) -> Lis
         image_name = str(result.get("image") or Path(entry["image_path"]).name)
         evidence = extract_part_evidence(image_name, result)
         if not evidence:
+            notes = "No IC marking extracted"
+            if isinstance(result, dict) and result.get("error"):
+                notes = f"Vision processing error: {result.get('message', 'unknown error')}"
+            elif isinstance(result, dict) and result.get("warnings"):
+                notes = "; ".join(str(w) for w in result.get("warnings", []) if str(w).strip()) or notes
             rows.append({
                 "image": image_name,
                 "candidate_part": "",
@@ -279,7 +348,7 @@ def image_part_rows(results: List[Dict[str, Any]], cache: Dict[str, Any]) -> Lis
                 "observed_markings": "",
                 "observations": "",
                 "raw_json": entry["raw_json"],
-                "notes": "No IC marking extracted",
+                "notes": notes,
             })
             continue
 
@@ -425,6 +494,63 @@ def write_final_csv(results: List[Dict[str, Any]], cache: Dict[str, Any], output
     write_csv(output_csv.with_name(f"{output_csv.stem}_evidence{output_csv.suffix}"), evidence_fieldnames, evidence_rows)
 
 
+def validate_setup(args: argparse.Namespace, output_dir: Path) -> None:
+    image_folder = Path(args.image_folder).expanduser().resolve()
+    print("Setup validation:")
+    print(f"- Python executable: {sys.executable}")
+    print("- Required imports: ok")
+
+    if image_folder.is_dir():
+        images = iter_images(image_folder, args.recursive, args.limit)
+        print(f"- Image folder: ok ({image_folder})")
+        print(f"- Supported images found: {len(images)}")
+        heic_images = [p for p in images if p.suffix.lower() in {".heic", ".heif"}]
+        if heic_images:
+            try:
+                import pillow_heif  # noqa: F401
+                print("- HEIC/HEIF support: ok")
+            except Exception:
+                print("- HEIC/HEIF support: missing pillow-heif; install it to process HEIC/HEIF images")
+    else:
+        print(f"- Image folder: missing or not a directory ({image_folder})")
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        probe = output_dir / ".vision_inventory_write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        print(f"- Output directory writable: ok ({output_dir})")
+    except Exception as exc:
+        print(f"- Output directory writable: failed ({exc})")
+
+    if args.skip_vision:
+        raw_dir = output_dir / "raw"
+        raw_count = len(list(raw_dir.glob("*.json"))) if raw_dir.exists() else 0
+        print(f"- Raw JSON files for --skip-vision: {raw_count}")
+    else:
+        _account_id, _api_token, credential_error = vision.get_cloudflare_credentials()
+        if credential_error:
+            print(f"- Cloudflare credentials: missing ({credential_error.get('message')})")
+        else:
+            print("- Cloudflare credentials: present")
+
+
+def print_workflow_summary(results: List[Dict[str, Any]], parts_to_lookup: Dict[str, Any]) -> None:
+    error_summary = result_error_summary(results)
+    evidence_count = len(parts_to_lookup.get("all_evidence", []))
+    part_count = len(parts_to_lookup.get("parts", []))
+    print("Workflow summary:")
+    print(f"- Processed/raw result files: {len(results)}")
+    print(f"- IC marking evidence rows: {evidence_count}")
+    print(f"- Candidate parts extracted: {part_count}")
+    if error_summary:
+        print("- Processing errors:")
+        for label, count in sorted(error_summary.items()):
+            print(f"  - {label}: {count}")
+    if not part_count:
+        print("No candidate IC parts were extracted. Inspect output/raw/*.json for unreadable markings, image quality issues, or API errors.")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Process electronics images and prepare datasheet-enriched CSV workflow.")
     parser.add_argument("image_folder", help="Folder containing electronics/PCB images")
@@ -433,6 +559,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recursive", action="store_true", help="Scan image_folder recursively")
     parser.add_argument("--limit", type=int, default=None, help="Maximum number of images to process")
     parser.add_argument("--skip-vision", action="store_true", help="Reuse existing output_dir/raw/*.json instead of calling vision AI")
+    parser.add_argument("--validate-setup", action="store_true", help="Check dependencies, paths, credentials, and image discovery without processing images")
     parser.add_argument("--max-side", type=int, default=vision.DEFAULT_MAX_SIDE, help="Maximum resized image side; use 0 for full resolution (default)")
     parser.add_argument("--jpeg-quality", type=int, default=vision.DEFAULT_JPEG_QUALITY, help="JPEG quality for model input")
     return parser.parse_args()
@@ -441,6 +568,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir).expanduser().resolve()
+
+    if args.validate_setup:
+        validate_setup(args, output_dir)
+        return
+
     raw_dir = output_dir / "raw"
     output_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -452,7 +584,7 @@ def main() -> None:
     else:
         results = process_images(args, raw_dir)
 
-    parts_to_lookup = build_parts_to_lookup(results)
+    parts_to_lookup = build_parts_to_lookup(results, output_dir)
     parts_path = output_dir / "parts_to_lookup.json"
     template_path = output_dir / "datasheet_cache.template.json"
     cache_path = output_dir / "datasheet_cache.json"
@@ -470,8 +602,13 @@ def main() -> None:
     print(f"Datasheet cache template: {template_path}")
     print(f"Datasheet cache used: {cache_path if cache_path.exists() else 'not found yet'}")
     print(f"CSV written: {csv_path}")
+    print_workflow_summary(results, parts_to_lookup)
     if not cache_path.exists():
-        print("Next step: copy datasheet_cache.template.json to datasheet_cache.json, enrich it via web search, then rerun with --skip-vision.")
+        print("Next step: copy datasheet_cache.template.json to datasheet_cache.json in the output directory, enrich it via web search, then rerun with --skip-vision.")
+
+    errors = result_error_summary(results)
+    if results and sum(errors.values()) == len(results):
+        raise SystemExit("All processed images returned errors; see the summary above and inspect raw JSON files.")
 
 
 if __name__ == "__main__":
