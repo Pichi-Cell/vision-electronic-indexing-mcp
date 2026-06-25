@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vision-inventory": {
+      "command": "python3",
+      "args": ["/path/to/vision-electronic-indexing-mcp/vision_inventory_mcp.py"],
+      "env": {
+        "CLOUDFLARE_ACCOUNT_ID": "your_cloudflare_account_id",
+        "CLOUDFLARE_AUTH_TOKEN": "your_cloudflare_workers_ai_token"
+      }
+    }
+  }
+}

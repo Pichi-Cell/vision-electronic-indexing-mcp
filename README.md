@@ -71,6 +71,95 @@ Optional model override:
 export WORKERS_AI_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
 ```
 
+## Other harnesses / universal MCP compatibility
+
+This repository also includes a harness-neutral compatibility layer in `.universal/` for MCP-capable coding agents such as OpenCode, Claude Code, Codex CLI, Cursor, and similar clients.
+
+The universal layer does **not** replace the Pi package integration. Pi users should keep using the commands above. Other harnesses can connect directly to the Python MCP server:
+
+```bash
+python3 /path/to/vision-electronic-indexing-mcp/vision_inventory_mcp.py
+```
+
+### 1. Install Python dependencies
+
+From the repository root:
+
+```bash
+python3 -m pip install -r requirements.txt
+# Optional for iPhone HEIC/HEIF photos:
+# python3 -m pip install pillow-heif
+```
+
+### 2. Configure Cloudflare credentials
+
+Either copy `.env.example` to `.env` in the repository root:
+
+```bash
+cp .env.example .env
+# edit .env and set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AUTH_TOKEN
+```
+
+or put the credentials directly in your harness MCP server configuration.
+
+### 3. Add the MCP server to your harness
+
+Example config snippets are provided in:
+
+```text
+.universal/configs/opencode.json.example
+.universal/configs/claude.json.example
+.universal/configs/codex.json.example
+.universal/configs/cursor.json.example
+```
+
+Each config should point to the repository-root server file, for example:
+
+```json
+{
+  "mcpServers": {
+    "vision-inventory": {
+      "command": "python3",
+      "args": ["/path/to/vision-electronic-indexing-mcp/vision_inventory_mcp.py"],
+      "env": {
+        "CLOUDFLARE_ACCOUNT_ID": "your_cloudflare_account_id",
+        "CLOUDFLARE_AUTH_TOKEN": "your_cloudflare_workers_ai_token"
+      }
+    }
+  }
+}
+```
+
+The `.universal/configs/*.json.example` files are strict JSON; copy the appropriate file into your harness config location and adjust paths/credentials.
+
+The raw MCP server exposes these tool names:
+
+| Tool | Purpose |
+|---|---|
+| `process_image` | Analyze one electronics/PCB image. |
+| `process_image_folder` | Analyze a folder of supported images. |
+| `save_inventory` | Save inventory output as JSON or CSV. |
+
+### 4. Install the universal skill/prompt, if your harness supports them
+
+Universal workflow assets are available at:
+
+```text
+.universal/skills/vision-inventory-workflow/SKILL.md
+.universal/prompts/vision-inventory-agent-bom.md
+```
+
+Copy them into your harness-specific skills/prompts location. The skill instructs the agent to run the deterministic workflow, read `parts_to_lookup.json`, verify datasheets with web search, fill `datasheet_cache.json`, regenerate the CSV with `--skip-vision`, and summarize uncertainties.
+
+The deterministic workflow command is the same as the manual shell workflow:
+
+```bash
+python3 scripts/inventory_folder_to_csv.py ./photos ./output
+python3 scripts/inventory_folder_to_csv.py ./photos ./output --skip-vision
+```
+
+Datasheet enrichment still requires a separate web-search/browser capability in the agent. This package does not bundle one.
+
 ## Recommended workflow
 
 ### 1. Take photos
