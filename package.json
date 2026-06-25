@@ -1,6 +1,6 @@
 {
   "name": "vision-electronic-indexing-pi",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Pi package for agent-assisted electronics/PCB image inventory with Cloudflare Workers AI vision and datasheet enrichment.",
   "license": "MIT",
   "repository": {
