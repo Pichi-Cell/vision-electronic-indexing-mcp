@@ -73,6 +73,8 @@ export WORKERS_AI_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
 
 ## Other harnesses / universal MCP compatibility
 
+_Contributed by user @Brun0-v_ 
+
 This repository also includes a harness-neutral compatibility layer in `.universal/` for MCP-capable coding agents such as OpenCode, Claude Code, Codex CLI, Cursor, and similar clients.
 
 The universal layer does **not** replace the Pi package integration. Pi users should keep using the commands above. Other harnesses can connect directly to the Python MCP server:
