@@ -1,47 +1,222 @@
-# Vision Electronic Indexing MCP + Pi Workflow
+# Vision Electronic Indexing for Pi
 
-This project turns electronics / PCB photos into a structured inventory workflow:
+Agent-assisted electronics/PCB photo indexing for Pi. The package processes images with Cloudflare Workers AI, extracts visible IC/package markings, prepares parts for datasheet lookup, and produces an enriched inventory CSV.
 
-```text
-Image is taken -> saved in a folder -> Pi processes each photo -> raw IC data is extracted
--> agent/user verifies datasheets -> enriched inventory is exported to CSV
-```
-
-The core vision step is a local Python MCP server that sends images to Cloudflare Workers AI. A project-local Pi extension bridges that MCP server into native Pi tools. A batch script implements the folder-to-CSV workflow with **agent-assisted datasheet enrichment**.
-
-## What this project does
-
-- Processes one electronics image or a folder of images.
-- Extracts visible IC/package markings, confidence, position hints, and review flags.
-- Supports multiple different ICs in the same image.
-- Preserves individual IC/package marking observations for audit and review.
-- Saves raw JSON for auditability.
-- Creates `parts_to_lookup.json` for datasheet enrichment.
-- Produces a final CSV, using `datasheet_cache.json` when enrichment is available.
-
-## What this project intentionally does not fully automate
-
-Datasheet lookup is intentionally **Option A: agent-assisted enrichment**.
-
-The script prepares the parts that need lookup, but it does not silently scrape the web and trust the result. Instead, Pi or a human should verify each part against a datasheet, fill `datasheet_cache.json`, and rerun the script to generate the final enriched CSV.
-
-This makes wrong OCR or wrong datasheet matches easier to catch.
-
-## Repository layout
+Typical flow:
 
 ```text
-vision_inventory_mcp.py                 # MCP server and core image-processing logic
-inventory.py                            # Original GUI/helper app
-requirements.txt                        # Python dependencies
-scripts/inventory_folder_to_csv.py      # Batch workflow script
-.pi/extensions/vision-inventory-mcp/    # Project-local Pi extension
+photos -> vision extraction -> raw JSON + evidence -> agent datasheet verification -> inventory.csv
 ```
 
-## Requirements
+The vision step does **not** perform datasheet lookup or invent part details. Datasheet enrichment is handled by a Pi agent with a web-search/browser tool or by manual review.
+
+## Quick setup with Pi
+
+### 1. Install the Pi package
+
+```bash
+pi install npm:vision-electronic-indexing-pi
+```
+
+For local development from this repository, open the repo in Pi and trust the project. Do not also install the npm package while working inside this repo, because the project-local extension and npm package register the same tools.
+
+### 2. Install/enable an agent web-search dependency
+
+Datasheet enrichment requires a Pi web-search or browser tool/skill. This package intentionally does **not** bundle one.
+
+Examples of acceptable capabilities:
+
+- a Brave/search Pi skill
+- a browser automation skill
+- another trusted web-search extension/tool
+
+If no search/browser capability is available, the agent workflow can still generate `parts_to_lookup.json`, but it cannot verify datasheets.
+
+### 3. Configure Cloudflare credentials
+
+Start Pi and run:
+
+```text
+/vision-inventory-setup
+```
+
+The setup command checks Python dependencies, checks for web-search/browser capability, and prompts for Cloudflare Workers AI credentials the first time.
+
+Credentials are stored at:
+
+```text
+~/.pi/agent/vision-inventory/credentials.json
+```
+
+The file is written with `chmod 600` when supported.
+
+To change credentials later:
+
+```text
+/vision-inventory-credentials
+```
+
+Environment variables also work and override stored credentials:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID=your_account_id
+export CLOUDFLARE_AUTH_TOKEN=your_workers_ai_token
+# or
+export CLOUDFLARE_API_TOKEN=your_workers_ai_token
+```
+
+Optional model override:
+
+```bash
+export WORKERS_AI_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
+```
+
+## Recommended workflow
+
+### 1. Take photos
+
+Take clear, close photos of IC groups or PCB sections. Cropped, well-lit IC close-ups work better than full-board photos for OCR.
+
+Example folder:
+
+```text
+photos/
+  image_001.jpeg
+  image_002.jpeg
+  image_003.jpeg
+```
+
+### 2. Run the full agent workflow
+
+In Pi:
+
+```text
+/vision-inventory-agent-bom ./photos ./output
+```
+
+Useful options:
+
+```text
+/vision-inventory-agent-bom ./photos ./output --recursive
+/vision-inventory-agent-bom ./photos ./output --limit 3
+/vision-inventory-agent-bom ./photos ./output --max-side 4000 --jpeg-quality 96
+```
+
+The agent workflow will:
+
+1. Run the image-processing batch script.
+2. Write raw JSON files for auditability.
+3. Build `parts_to_lookup.json`.
+4. Search for datasheets, preferring official manufacturer sources.
+5. Fill `datasheet_cache.json`.
+6. Rerun the CSV generation with `--skip-vision`.
+7. Summarize the BOM and call out uncertain rows.
+
+### 3. Review output
+
+Generated files:
+
+```text
+output/
+  raw/                              # one raw JSON result per image
+  parts_to_lookup.json              # parts/evidence requiring datasheet lookup
+  datasheet_cache.template.json     # enrichment template
+  datasheet_cache.json              # agent/user-filled enrichment cache
+  inventory.csv                     # deduplicated final BOM
+  inventory_evidence.csv            # per-image/per-candidate evidence rows
+```
+
+Always review rows where:
+
+```text
+needs_review=true
+verified=false
+```
+
+## CSV output columns
+
+`inventory.csv` is deduplicated by normalized part number. Multiple images, or multiple candidates from one image, can merge into one BOM row.
+
+Columns:
+
+| Column | Description |
+|---|---|
+| `normalized_part` | Final normalized part number, usually from datasheet enrichment. |
+| `candidate_parts` | Candidate part numbers extracted from visual markings. |
+| `amount` | Estimated quantity for the merged BOM row. |
+| `sighting_count` | Number of evidence rows merged into this BOM row. |
+| `description` | Short datasheet-verified description. |
+| `datasheet_url` | Datasheet/source URL used for enrichment. |
+| `manufacturer` | Verified or likely manufacturer. |
+| `verified` | `true` only when datasheet match was verified. |
+| `vision_confidence` | Vision/OCR confidence values observed for the row. |
+| `needs_review` | `true` when OCR or datasheet enrichment is uncertain. |
+| `images` | Source images contributing to the row. |
+| `observed_markings` | Raw visible markings seen on packages. |
+| `raw_json` | Raw JSON files used as evidence. |
+| `notes` | Datasheet/enrichment notes or uncertainty explanations. |
+
+`inventory_evidence.csv` keeps the non-deduplicated evidence rows used to build the BOM. A single photo can produce multiple evidence rows when it contains multiple different ICs.
+
+## Commands and tools
+
+### Pi commands
+
+```text
+/vision-inventory-setup
+/vision-inventory-credentials
+/vision-inventory-restart
+/vision-inventory-bom <image_folder> <output_dir> [options]
+/vision-inventory-agent-bom <image_folder> <output_dir> [options]
+```
+
+Command summary:
+
+| Command | Purpose |
+|---|---|
+| `/vision-inventory-setup` | Configure credentials and check dependencies. |
+| `/vision-inventory-credentials` | Change stored Cloudflare credentials. |
+| `/vision-inventory-restart` | Restart the local vision bridge process. |
+| `/vision-inventory-bom` | Run only the deterministic image-to-CSV workflow. |
+| `/vision-inventory-agent-bom` | Run the full agent-assisted workflow, including datasheet enrichment. |
+
+### Pi tools exposed to agents
+
+| Tool | Purpose |
+|---|---|
+| `vision_inventory_process_image` | Analyze one electronics/PCB image. |
+| `vision_inventory_process_folder` | Analyze a folder of supported images. |
+| `vision_inventory_save` | Save inventory output as JSON or CSV. |
+
+## Manual shell workflow
+
+You can run the deterministic workflow without Pi commands:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 scripts/inventory_folder_to_csv.py ./photos ./output
+```
+
+Then fill `output/datasheet_cache.json` manually or with an agent, and regenerate the CSV without reprocessing images:
+
+```bash
+python3 scripts/inventory_folder_to_csv.py ./photos ./output --skip-vision
+```
+
+## Python requirements
 
 Python 3.10 or newer is recommended.
 
-Install dependencies:
+Required:
+
+```text
+mcp
+requests
+pillow
+python-dotenv
+```
+
+Install:
 
 ```bash
 python3 -m pip install -r requirements.txt
@@ -53,144 +228,17 @@ Optional HEIC/HEIF support for iPhone photos:
 python3 -m pip install pillow-heif
 ```
 
-## Cloudflare setup
-
-Create a `.env` file in the project root:
-
-```env
-CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id
-CLOUDFLARE_AUTH_TOKEN=your_cloudflare_workers_ai_token
-```
-
-The token can also be provided as:
-
-```env
-CLOUDFLARE_API_TOKEN=your_cloudflare_workers_ai_token
-```
-
-Default Cloudflare Workers AI model:
+Supported image formats:
 
 ```text
-@cf/meta/llama-4-scout-17b-16e-instruct
-```
-
-Override it with:
-
-```bash
-export WORKERS_AI_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
-```
-
-## Pi package / extension setup
-
-This repo is also a Pi package. Recommended install:
-
-```bash
-pi install git:github.com/<you>/<this-repo>
-```
-
-For local development, open this repo in Pi and trust the project. Pi should auto-discover:
-
-```text
-.pi/extensions/vision-inventory-mcp/index.ts
-.pi/skills/vision-inventory-workflow/SKILL.md
-.pi/prompts/vision-inventory-agent-bom.md
-```
-
-If Pi is already running, use `/reload` or restart Pi.
-
-The package intentionally does **not** bundle these external dependencies:
-
-- Python dependencies from `requirements.txt` (`mcp`, `requests`, `pillow`, `python-dotenv`; optional `pillow-heif`).
-- A Pi web-search/browser tool or skill for datasheet enrichment.
-- Cloudflare Workers AI credentials.
-
-Run setup once:
-
-```text
-/vision-inventory-setup
-```
-
-The setup command prompts for Cloudflare credentials the first time and stores them at:
-
-```text
-~/.pi/agent/vision-inventory/credentials.json
-```
-
-The file is written with `chmod 600` when supported. To change credentials later:
-
-```text
-/vision-inventory-credentials
-```
-
-The extension exposes these tools:
-
-| Pi tool | Purpose |
-|---|---|
-| `vision_inventory_process_image` | Analyze one electronics image. |
-| `vision_inventory_process_folder` | Analyze all supported images in a folder. |
-| `vision_inventory_save` | Save inventory output as JSON or CSV. |
-
-It also adds these commands:
-
-```text
-/vision-inventory-setup
-/vision-inventory-credentials
-/vision-inventory-restart
-/vision-inventory-bom <image_folder> <output_dir> [options]
-/vision-inventory-agent-bom <image_folder> <output_dir> [options]
-```
-
-Use `/vision-inventory-restart` if the MCP bridge needs to be restarted after changing credentials or Python code.
-
-Use `/vision-inventory-bom` to run only the deterministic folder-to-CSV workflow from Pi. Examples:
-
-```text
-/vision-inventory-bom ./photos ./output
-/vision-inventory-bom ./photos ./output --recursive
-/vision-inventory-bom ./photos ./output --skip-vision
-```
-
-Options are forwarded to `scripts/inventory_folder_to_csv.py`.
-
-Use `/vision-inventory-agent-bom` for the full agent-operated procedure: vision processing, reading `parts_to_lookup.json`, web/datasheet enrichment, writing `datasheet_cache.json`, rerunning with `--skip-vision`, and summarizing uncertain rows:
-
-```text
-/vision-inventory-agent-bom ./photos ./output
-/vision-inventory-agent-bom ./photos ./output --recursive
-```
-
-Datasheet enrichment requires an installed/enabled web-search or browser tool/skill. This package explicitly does not bundle one.
-
-The extension launches:
-
-```bash
-python3 vision_inventory_mcp.py
-```
-
-If your Python command is different, start Pi with:
-
-```bash
-PI_VISION_INVENTORY_PYTHON=python pi
-```
-
-## Supported image formats
-
-```text
-.jpg
-.jpeg
-.png
-.webp
-.bmp
-.gif
-.heic
-.heif
+.jpg .jpeg .png .webp .bmp .gif .heic .heif
 ```
 
 HEIC/HEIF requires `pillow-heif`.
 
-## Image preprocessing
+## How image processing works
 
-Before sending an image to Cloudflare Workers AI, the server:
+Before sending an image to Cloudflare Workers AI, the Python server:
 
 1. Opens the image with Pillow.
 2. Applies EXIF orientation correction.
@@ -200,108 +248,35 @@ Before sending an image to Cloudflare Workers AI, the server:
 6. Encodes it as JPEG.
 7. Sends it as a base64 image data URL.
 
-Current default image settings:
+Defaults:
 
 ```text
 max_side: 4000
 jpeg_quality: 96
+model: @cf/meta/llama-4-scout-17b-16e-instruct
 ```
 
 ## Multiple-IC behavior
 
-Images may contain one IC or many different ICs. The vision step does not force all visible ICs in an image to share one marking or part family.
+Images may contain one IC or many different ICs. The workflow does not force all visible ICs in one image to share the same marking or part family.
 
-The processing flow is:
+The batch workflow builds one evidence row per image/candidate part, so one photo can contribute several BOM rows.
 
-1. General visible inventory extraction from the image.
-2. Each visible IC/package marking is kept as its own candidate when the model returns it separately.
-3. The batch workflow builds one evidence row per image/candidate part, so a single photo can contribute multiple different BOM rows.
+This improves handling of mixed IC photos, but OCR can still miss, merge, or misread small markings. Review raw JSON and evidence rows when accuracy matters.
 
-This does not guarantee correct OCR. It preserves alternate readings and marks uncertain candidates for review.
+## Datasheet enrichment rules
 
-## Main batch workflow
+The agent should:
 
-Use this when you have a folder of newly taken images and want a final CSV.
+- Prefer official manufacturer datasheets or product pages.
+- Keep descriptions short.
+- Set `verified=false` if the marking, part number, package, or source is uncertain.
+- Do not invent part numbers, manufacturers, voltages, functions, or datasheet URLs.
 
-From Pi, you can run the workflow as a slash command:
-
-```text
-/vision-inventory-bom ./photos ./output
-```
-
-From a normal shell, run the underlying script directly as shown below.
-
-### 1. Put images in a folder
-
-Example:
-
-```text
-photos/
-  image_001.jpeg
-  image_002.jpeg
-  image_003.jpeg
-```
-
-### 2. Run the batch workflow
-
-```bash
-python3 scripts/inventory_folder_to_csv.py ./photos ./output
-```
-
-This creates:
-
-```text
-output/
-  raw/                              # one raw JSON result per image
-  parts_to_lookup.json              # parts/evidence that need datasheet lookup
-  datasheet_cache.template.json     # template for enrichment
-  inventory.csv                     # deduplicated BOM CSV, possibly with missing enrichment fields
-  inventory_evidence.csv            # per-image evidence CSV used to build the BOM
-```
-
-Use recursive folder scanning if needed:
-
-```bash
-python3 scripts/inventory_folder_to_csv.py ./photos ./output --recursive
-```
-
-Limit images during testing:
-
-```bash
-python3 scripts/inventory_folder_to_csv.py ./photos ./output --limit 3
-```
-
-### 3. Enrich datasheets with Pi/web search
-
-Open `output/parts_to_lookup.json`. For each part, search for the datasheet and verify the description.
-
-Prefer official manufacturer datasheets when possible:
-
-1. Texas Instruments
-2. Analog Devices / Maxim
-3. STMicroelectronics
-4. ONsemi
-5. Nexperia
-6. Other manufacturer PDFs
-
-Copy the template:
-
-```bash
-cp output/datasheet_cache.template.json output/datasheet_cache.json
-```
-
-Fill each entry. Example:
+Example `datasheet_cache.json` entry:
 
 ```json
 {
-  "SN74LS283N": {
-    "normalized_part": "SN74LS283N",
-    "description": "74ls (4 bit) adder low power schottky ttl 5v DIP",
-    "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74ls283.pdf",
-    "manufacturer": "Texas Instruments",
-    "verified": true,
-    "notes": "Verified against TI datasheet. N package is PDIP."
-  },
   "MAX232N": {
     "normalized_part": "MAX232N",
     "description": "MAX232N dual EIA-232/RS-232 driver receiver 5v DIP",
@@ -313,76 +288,25 @@ Fill each entry. Example:
 }
 ```
 
-Recommended Pi prompt for enrichment:
+## Local MCP server details
 
-```text
-Read output/parts_to_lookup.json. For each part, web-search the datasheet, prefer official manufacturer PDFs, verify function/package/voltage/family, then fill output/datasheet_cache.json. Keep descriptions in this short format: "74ls (4 bit) adder low power schottky ttl 5v DIP". Set verified=false if uncertain.
-```
+Internally, the vision step is implemented by `vision_inventory_mcp.py`, a local Python MCP stdio server. The Pi extension starts this server lazily and exposes its functionality as Pi tools.
 
-### 4. Regenerate CSV without reprocessing images
+MCP tools:
 
-After filling `datasheet_cache.json`, rerun:
+| MCP tool | Purpose |
+|---|---|
+| `process_image` | Analyze one image and return structured visible inventory data. |
+| `process_image_folder` | Analyze all supported images in a folder. |
+| `save_inventory` | Save inventory output to JSON or CSV. |
 
-```bash
-python3 scripts/inventory_folder_to_csv.py ./photos ./output --skip-vision
-```
-
-This reuses `output/raw/*.json` and writes a new enriched:
-
-```text
-output/inventory.csv
-```
-
-## Final CSV columns
-
-By default, `inventory.csv` is deduplicated by normalized part number. Multiple images, or multiple candidates from the same image, with the same IC become one BOM row with `sighting_count` and an `images` list.
-
-```text
-normalized_part
-candidate_parts
-amount
-sighting_count
-description
-datasheet_url
-manufacturer
-verified
-vision_confidence
-needs_review
-images
-observed_markings
-raw_json
-notes
-```
-
-Example BOM row:
-
-```csv
-SN74LS283N,SN74LS283N,8,2,74ls (4 bit) adder low power schottky ttl 5v DIP,https://www.ti.com/lit/ds/symlink/sn74ls283.pdf,Texas Instruments,true,high/low,true,"image_001.jpeg | image_002.jpeg","SN74LS283N | SN74S283N","output/raw/image_001.json | output/raw/image_002.json","Verified against TI datasheet"
-```
-
-The script also writes `inventory_evidence.csv`, which keeps the non-deduplicated per-image/candidate rows used to build the BOM. It includes the same per-sighting `amount` estimate before aggregation.
-
-`amount` is estimated from the number of matching IC candidate items/evidence rows for that candidate. `sighting_count` is the number of evidence rows that were merged into the BOM row.
-
-## MCP server usage
-
-Run the MCP server directly with:
+Run directly for MCP-compatible clients:
 
 ```bash
 python3 vision_inventory_mcp.py
 ```
 
-The server uses MCP `stdio` transport, so it is meant to be launched by an MCP-compatible client or by the Pi extension.
-
-### MCP tools
-
-| MCP tool | Purpose |
-|---|---|
-| `process_image` | Analyze one image and return visible inventory data. |
-| `process_image_folder` | Analyze all supported images in a folder. |
-| `save_inventory` | Save inventory output to JSON or CSV. |
-
-### Example MCP client configuration
+Example MCP client configuration:
 
 ```json
 {
@@ -399,40 +323,9 @@ The server uses MCP `stdio` transport, so it is meant to be launched by an MCP-c
 }
 ```
 
-## Single-image output example
-
-```json
-{
-  "image": "image_001.jpeg",
-  "items": [
-    {
-      "item_type": "IC",
-      "count_index": 1,
-      "package_marking": "SN74LS283N",
-      "marking_confidence": "medium",
-      "likely_part": "SN74LS283N",
-      "description": "visible DIP IC marking",
-      "position_hint": "top-right",
-      "needs_review": true
-    },
-    {
-      "item_type": "IC",
-      "count_index": 2,
-      "package_marking": "MAX232N",
-      "marking_confidence": "high",
-      "likely_part": "MAX232N",
-      "description": "visible DIP IC marking",
-      "position_hint": "bottom-left",
-      "needs_review": false
-    }
-  ],
-  "warnings": []
-}
-```
-
 ## Error handling
 
-The server returns structured errors when possible:
+The server returns structured errors where possible, for example:
 
 ```json
 {
@@ -444,34 +337,18 @@ The server returns structured errors when possible:
 Handled cases include:
 
 - Missing Cloudflare credentials.
-- Invalid image path.
-- Unsupported image extension.
+- Invalid image paths.
+- Unsupported image extensions.
 - Failed image preprocessing.
 - Cloudflare API errors.
 - Invalid JSON from the model.
-- Missing or invalid folder path.
+- Missing or invalid folders.
 - Save/write failures.
 
-## Important limitations
+## Limitations
 
-- Vision models can misread small or blurry IC markings.
-- A higher-resolution or closer photo usually helps more than prompt changes.
-- Full-board photos are useful for context; cropped IC close-ups are better for marking OCR.
-- Multiple ICs in one image can still be missed or merged by the vision model if markings are small or blurry.
-- Datasheet enrichment should be verified against official sources.
-- The script does not deduplicate the same physical part across multiple images unless you handle that in the enrichment/review step.
-
-## Recommended operating procedure
-
-1. Install the Pi package/extension and run `/vision-inventory-setup` once.
-2. Take a clear photo of each IC group.
-3. Save photos into a dated folder.
-4. Run the full agent workflow:
-
-   ```text
-   /vision-inventory-agent-bom ./photos ./output
-   ```
-
-5. Review `inventory.csv`, especially rows with `needs_review=true` or `verified=false`.
-
-Manual fallback remains available with `scripts/inventory_folder_to_csv.py` and `/vision-inventory-bom`.
+- Vision models can misread small, blurry, or low-contrast IC markings.
+- Cropped close-ups usually help more than prompt changes.
+- Datasheet enrichment depends on the quality of the installed web-search/browser tool.
+- Official datasheets should still be reviewed for important work.
+- The workflow deduplicates by normalized part number, not by physical component identity across overlapping photos.
