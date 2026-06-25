@@ -463,7 +463,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  async function runSetup(ctx: { ui: any; hasUI: boolean }, forceCredentials = false): Promise<void> {
+  async function runSetup(ctx: { ui: any; hasUI: boolean }, forceCredentials = false): Promise<boolean> {
     const existing = await loadCredentials();
     const hasEffectiveAccountId = Boolean(process.env.CLOUDFLARE_ACCOUNT_ID || existing.cloudflareAccountId);
     const hasEffectiveToken = Boolean(process.env.CLOUDFLARE_AUTH_TOKEN || process.env.CLOUDFLARE_API_TOKEN || existing.cloudflareAuthToken);
@@ -482,10 +482,11 @@ export default function (pi: ExtensionAPI) {
     }
 
     const pythonReady = await ensurePythonEnvironment(pi, packageRoot, ctx);
-    if (!pythonReady) return;
+    if (!pythonReady) return false;
 
     ctx.ui.notify("Datasheet enrichment requires a separate web-search/browser Pi tool or skill. This package does not provide one; if your agent cannot search the web, fill datasheet_cache.json manually.", "info");
     ctx.ui.notify(`Vision Inventory setup checked. Package root: ${packageRoot}. Python: ${await getPythonCommand()}`, "info");
+    return true;
   }
 
   pi.registerCommand("vision-inventory-setup", {
@@ -536,7 +537,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      await runSetup(ctx, false);
+      const setupOk = await runSetup(ctx, false);
+      if (!setupOk) return;
       const normalized = normalizeWorkflowArgs(ctx.cwd, parsed);
       const normalizedArgs = normalized.map((arg) => JSON.stringify(arg)).join(" ");
       const outputDir = normalized[1];
