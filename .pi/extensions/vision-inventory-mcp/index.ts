@@ -489,7 +489,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("vision-inventory-setup", {
-    description: "Configure Vision Inventory credentials and check Python dependencies"}]}     骗? malformed? Let's see tool output. It didn't show. Wait I added weird. It might not execute due invalid JSON? It seems output missing. Need check.        Cad   
+    description: "Configure Vision Inventory credentials and check Python dependencies",
     handler: async (args, ctx) => {
       try {
         await runSetup(ctx, args.includes("--reset") || args.includes("--credentials"));
