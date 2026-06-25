@@ -81,7 +81,7 @@ This package intentionally does **not** bundle:
 The main output is `inventory.csv`, with columns:
 
 ```text
-likely_part
+normalized_part
 candidate_parts
 amount
 sighting_count

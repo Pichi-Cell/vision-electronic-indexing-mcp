@@ -228,15 +228,17 @@ def lookup_enrichment(part: str, cache: Dict[str, Any]) -> Dict[str, Any]:
 def estimate_amount_for_candidate(result: Dict[str, Any], candidate: str, evidence_count: int = 1) -> int:
     """Estimate physical IC quantity for one candidate in one image.
 
-    Count separate matching IC items. The schema field count_index is treated as
-    an ordinal/index, not a quantity. Fall back to the number of candidate
-    evidence rows when only observations are available.
+    Some vision results use count_index as a grouped visible count, while others
+    use it as an ordinal. Use the maximum of matching item count, evidence count,
+    and any numeric count_index values so grouped detections like count_index=4
+    produce amount=4 without double-counting duplicate observations.
     """
     items = result.get("items", [])
     if not isinstance(items, list):
         return max(1, evidence_count)
 
     matched = 0
+    count_values: List[int] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -245,10 +247,12 @@ def estimate_amount_for_candidate(result: Dict[str, Any], candidate: str, eviden
         if candidate_from_item(item).upper() != candidate.upper():
             continue
         matched += 1
+        try:
+            count_values.append(max(1, int(item.get("count_index", 1))))
+        except Exception:
+            pass
 
-    if matched > 0:
-        return matched
-    return max(1, evidence_count)
+    return max([1, evidence_count, matched, *count_values])
 
 
 def image_part_rows(results: List[Dict[str, Any]], cache: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -261,7 +265,7 @@ def image_part_rows(results: List[Dict[str, Any]], cache: Dict[str, Any]) -> Lis
             rows.append({
                 "image": image_name,
                 "candidate_part": "",
-                "likely_part": "",
+                "normalized_part": "",
                 "amount": 0,
                 "description": "",
                 "datasheet_url": "",
@@ -288,7 +292,8 @@ def image_part_rows(results: List[Dict[str, Any]], cache: Dict[str, Any]) -> Lis
             enrichment = lookup_enrichment(candidate, cache)
             likely_part = str(enrichment.get("normalized_part") or candidate).strip().upper()
             amount = estimate_amount_for_candidate(result, candidate, evidence_count=len(candidate_evidence))
-            observed_markings = sorted({row["observed_marking"] for row in candidate_evidence})
+            # Keep observed_markings normalized to the main visible part number, not full date/lot/package text.
+            observed_markings = [likely_part]
             observations = "; ".join(
                 f"{row['position_hint']}: {row['observed_marking']} ({row['marking_confidence']})"
                 for row in candidate_evidence
@@ -299,7 +304,7 @@ def image_part_rows(results: List[Dict[str, Any]], cache: Dict[str, Any]) -> Lis
             rows.append({
                 "image": image_name,
                 "candidate_part": candidate,
-                "likely_part": likely_part,
+                "normalized_part": likely_part,
                 "amount": amount,
                 "description": enrichment.get("description", ""),
                 "datasheet_url": enrichment.get("datasheet_url", ""),
@@ -329,7 +334,7 @@ def write_final_csv(results: List[Dict[str, Any]], cache: Dict[str, Any], output
     evidence_fieldnames = [
         "image",
         "candidate_part",
-        "likely_part",
+        "normalized_part",
         "amount",
         "description",
         "datasheet_url",
@@ -346,7 +351,7 @@ def write_final_csv(results: List[Dict[str, Any]], cache: Dict[str, Any], output
     grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     no_part_rows: List[Dict[str, Any]] = []
     for row in evidence_rows:
-        part = str(row.get("likely_part") or row.get("candidate_part") or "").strip().upper()
+        part = str(row.get("normalized_part") or row.get("candidate_part") or "").strip().upper()
         if not part:
             no_part_rows.append(row)
         else:
@@ -363,7 +368,7 @@ def write_final_csv(results: List[Dict[str, Any]], cache: Dict[str, Any], output
         amount = sum(int(row.get("amount", 0) or 0) for row in rows_for_part)
 
         bom_rows.append({
-            "likely_part": part,
+            "normalized_part": part,
             "candidate_parts": " | ".join(sorted({str(row["candidate_part"]) for row in rows_for_part if row.get("candidate_part")})),
             "amount": amount,
             "sighting_count": len(rows_for_part),
@@ -381,7 +386,7 @@ def write_final_csv(results: List[Dict[str, Any]], cache: Dict[str, Any], output
 
     for row in no_part_rows:
         bom_rows.append({
-            "likely_part": "",
+            "normalized_part": "",
             "candidate_parts": "",
             "amount": 0,
             "sighting_count": 1,
@@ -398,7 +403,7 @@ def write_final_csv(results: List[Dict[str, Any]], cache: Dict[str, Any], output
         })
 
     bom_fieldnames = [
-        "likely_part",
+        "normalized_part",
         "candidate_parts",
         "amount",
         "sighting_count",

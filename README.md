@@ -135,13 +135,13 @@ verified=false
 
 ## CSV output columns
 
-`inventory.csv` is deduplicated by `likely_part`, the main/final part number column. Multiple images, or multiple candidates from one image, can merge into one BOM row when they resolve to the same `likely_part`.
+`inventory.csv` is deduplicated by `normalized_part`, the main/final part number column derived from the vision `likely_part` and datasheet enrichment. Multiple images, or multiple candidates from one image, can merge into one BOM row when they resolve to the same `normalized_part`.
 
 Columns:
 
 | Column | Description |
 |---|---|
-| `likely_part` | Main dedupe key/final likely part number, usually from datasheet enrichment. |
+| `normalized_part` | Main dedupe key/final part number, usually from datasheet enrichment and based on the vision `likely_part`. |
 | `candidate_parts` | Candidate part numbers extracted from visual markings. |
 | `amount` | Estimated quantity for the merged BOM row. |
 | `sighting_count` | Number of evidence rows merged into this BOM row. |

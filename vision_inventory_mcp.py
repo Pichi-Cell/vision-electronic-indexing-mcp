@@ -646,8 +646,15 @@ def count_inventory_rows(inventory: Dict[str, Any]) -> int:
     return 0
 
 
-def flatten_inventory_for_csv(inventory: Dict[str, Any]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
+def flatten_inventory_for_csv(inventory: Dict[str, Any], enrichment_cache: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Flatten raw vision output into BOM-style, likely-part-deduped CSV rows.
+
+    This is intentionally less complete than scripts/inventory_folder_to_csv.py
+    because the save tool only receives in-memory vision output. If a
+    datasheet_cache.json object is provided, matching enrichment fields are used.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    cache = enrichment_cache or {}
 
     if isinstance(inventory.get("items"), list):
         image_results = [inventory]
@@ -660,31 +667,64 @@ def flatten_inventory_for_csv(inventory: Dict[str, Any]) -> List[Dict[str, Any]]
             continue
 
         image_name = str(result.get("image", "unknown"))
-        warnings = result.get("warnings", [])
-        if isinstance(warnings, list):
-            warnings_text = " | ".join(str(w) for w in warnings)
-        else:
-            warnings_text = str(warnings)
-
         items = result.get("items", [])
         if not isinstance(items, list):
             continue
 
+        by_image_part: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for item in items:
             if not isinstance(item, dict):
                 continue
-            rows.append({
+            if str(item.get("item_type", "")).strip().lower() != "ic":
+                continue
+
+            candidate = str(item.get("likely_part") or item.get("package_marking") or "unknown").strip().upper()
+            if not candidate or candidate.lower() in {"unknown", "unreadable", "unclear", "none", "n/a"}:
+                continue
+            enrichment = cache.get(candidate, {}) if isinstance(cache.get(candidate, {}), dict) else {}
+            normalized = str(enrichment.get("normalized_part") or candidate).strip().upper()
+            key = (image_name, normalized)
+            row = by_image_part.setdefault(key, {
                 "image": image_name,
-                "item_type": item.get("item_type", "unknown"),
-                "count_index": item.get("count_index", ""),
-                "package_marking": item.get("package_marking", "unknown"),
-                "marking_confidence": item.get("marking_confidence", "unreadable"),
-                "likely_part": item.get("likely_part", "unknown"),
-                "description": item.get("description", "unknown"),
-                "position_hint": item.get("position_hint", "unknown"),
-                "needs_review": item.get("needs_review", True),
-                "warnings": warnings_text,
+                "normalized_part": normalized,
+                "candidate_parts": set(),
+                "amount": 0,
+                "vision_confidence": set(),
+                "needs_review": False,
+                "observed_markings": set(),
             })
+            row["candidate_parts"].add(candidate)
+            row["vision_confidence"].add(str(item.get("marking_confidence", "unknown")))
+            row["needs_review"] = bool(row["needs_review"] or item.get("needs_review", True))
+            # Keep the main part number as the observation, not the full package/date/lot marking.
+            row["observed_markings"].add(normalized)
+            try:
+                row["amount"] = max(int(row["amount"]), int(item.get("count_index", 1)))
+            except Exception:
+                row["amount"] = max(int(row["amount"]), 1)
+
+        for row in by_image_part.values():
+            grouped.setdefault(str(row["normalized_part"]), []).append(row)
+
+    rows: List[Dict[str, Any]] = []
+    for part, part_rows in sorted(grouped.items()):
+        enrichment = cache.get(part, {}) if isinstance(cache.get(part, {}), dict) else {}
+        rows.append({
+            "normalized_part": part,
+            "candidate_parts": " | ".join(sorted({candidate for row in part_rows for candidate in row["candidate_parts"]})),
+            "amount": sum(int(row.get("amount", 0) or 0) for row in part_rows),
+            "sighting_count": len(part_rows),
+            "description": enrichment.get("description", ""),
+            "datasheet_url": enrichment.get("datasheet_url", ""),
+            "manufacturer": enrichment.get("manufacturer", ""),
+            "verified": bool(enrichment.get("verified", False)),
+            "vision_confidence": "/".join(sorted({value for row in part_rows for value in row["vision_confidence"]})),
+            "needs_review": any(bool(row.get("needs_review", True)) for row in part_rows) or not bool(enrichment.get("verified", False)),
+            "images": " | ".join(sorted({str(row["image"]) for row in part_rows})),
+            "observed_markings": " | ".join(sorted({marking for row in part_rows for marking in row["observed_markings"]})),
+            "raw_json": "",
+            "notes": enrichment.get("notes", "Missing datasheet enrichment"),
+        })
 
     return rows
 
@@ -720,18 +760,32 @@ def save_inventory(
             row_count = count_inventory_rows(inventory)
 
         else:
-            rows = flatten_inventory_for_csv(inventory)
+            cache_path = output.parent / "datasheet_cache.json"
+            enrichment_cache: Dict[str, Any] = {}
+            if cache_path.exists():
+                try:
+                    loaded_cache = json.loads(cache_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded_cache, dict):
+                        enrichment_cache = loaded_cache
+                except Exception:
+                    enrichment_cache = {}
+
+            rows = flatten_inventory_for_csv(inventory, enrichment_cache)
             fieldnames = [
-                "image",
-                "item_type",
-                "count_index",
-                "package_marking",
-                "marking_confidence",
-                "likely_part",
+                "normalized_part",
+                "candidate_parts",
+                "amount",
+                "sighting_count",
                 "description",
-                "position_hint",
+                "datasheet_url",
+                "manufacturer",
+                "verified",
+                "vision_confidence",
                 "needs_review",
-                "warnings",
+                "images",
+                "observed_markings",
+                "raw_json",
+                "notes",
             ]
 
             with output.open("w", newline="", encoding="utf-8") as csv_file:
