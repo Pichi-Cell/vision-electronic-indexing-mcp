@@ -428,7 +428,7 @@ export default function (pi: ExtensionAPI) {
     if ((!hasEffectiveAccountId || !hasEffectiveToken || forceCredentials) && ctx.hasUI) {
       ctx.ui.notify("Vision Inventory stores Cloudflare credentials in ~/.pi/agent/vision-inventory/credentials.json with chmod 600 when supported. Use /vision-inventory-credentials to change them.", "info");
       const cloudflareAccountId = await ctx.ui.input("Cloudflare account ID", existing.cloudflareAccountId || "");
-      const cloudflareAuthToken = await ctx.ui.input("Cloudflare Workers AI token", existing.cloudflareAuthToken ? "<keep existing; paste new token to replace>" : "");
+      const cloudflareAuthToken = await ctx.ui.input("Cloudflare Workers AI token (leave blank for default)", existing.cloudflareAuthToken ? "<keep existing; paste new token to replace>" : "");
       const workersAiModel = await ctx.ui.input("Workers AI model", existing.workersAiModel || "@cf/meta/llama-4-scout-17b-16e-instruct");
       await saveCredentials({
         cloudflareAccountId: cloudflareAccountId || existing.cloudflareAccountId,
