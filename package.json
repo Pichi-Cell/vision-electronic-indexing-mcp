@@ -29,8 +29,7 @@
     "scripts/inventory_folder_to_csv.py",
     ".pi/extensions/vision-inventory-mcp/README.md",
     ".pi/extensions/vision-inventory-mcp/index.ts",
-    ".pi/skills/vision-inventory-workflow/SKILL.md",
-    ".pi/prompts/vision-inventory-agent-bom.md"
+    ".pi/skills/vision-inventory-workflow/SKILL.md"
   ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -43,9 +42,6 @@
     ],
     "skills": [
       ".pi/skills"
-    ],
-    "prompts": [
-      ".pi/prompts"
     ]
   }
 }
